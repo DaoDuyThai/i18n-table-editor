@@ -1,26 +1,227 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "i18n-table-editor" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('i18n-table-editor.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from i18n-table-editor!');
-	});
-
-	context.subscriptions.push(disposable);
+// Flatten JSON để lấy key-value (chỉ string values)
+function flattenJson(obj: any, prefix = ''): Record<string, string> {
+  let result: Record<string, string> = {};
+  for (const key in obj) {
+    const value = obj[key];
+    const newKey = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === 'string') {
+      result[newKey] = value; // Chỉ lấy "text": "text"
+    } else if (typeof value === 'object' && value !== null) {
+      if (Array.isArray(value)) {
+        // Xử lý array: flatten với index
+        value.forEach((item, index) => {
+          Object.assign(result, flattenJson(item, `${newKey}[${index}]`));
+        });
+      } else {
+        // Object: recursive
+        Object.assign(result, flattenJson(value, newKey));
+      }
+    }
+    // Bỏ qua nếu không phải string (theo yêu cầu "chỉ chọn text:text")
+  }
+  return result;
 }
 
-// This method is called when your extension is deactivated
+// Thu thập data từ thư mục
+function collectData(folderPath: string): { languages: string[], keys: string[], data: Record<string, Record<string, string>> } {
+  const files = fs.readdirSync(folderPath).filter(f => f.endsWith('.json'));
+  const languages = files.map(f => path.basename(f, '.json'));
+  const allKeys = new Set<string>();
+  const data: Record<string, Record<string, string>> = {};
+
+  languages.forEach(lang => {
+    const filePath = path.join(folderPath, `${lang}.json`);
+    const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const flattened = flattenJson(json);
+    data[lang] = flattened;
+    Object.keys(flattened).forEach(k => allKeys.add(k));
+  });
+
+  return { languages, keys: Array.from(allKeys).sort(), data };
+}
+
+export function activate(context: vscode.ExtensionContext) {
+  let disposable = vscode.commands.registerCommand('i18nTableEditor.openTable', async () => {
+    // Chọn thư mục
+    const folderUri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Select i18n Folder' });
+    if (!folderUri || folderUri.length === 0) return;
+
+    const folderPath = folderUri[0].fsPath;
+    let { languages, keys, data } = collectData(folderPath);
+
+    // Tạo Webview
+    const panel = vscode.window.createWebviewPanel(
+      'i18nTable',
+      'i18n Table Editor',
+      vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+
+    // HTML cho webview (xem bên dưới)
+    panel.webview.html = getWebviewContent(languages, keys, data, folderPath);
+
+    // Xử lý message từ webview (add key, add lang, rename, save changes)
+    panel.webview.onDidReceiveMessage(message => {
+      switch (message.command) {
+        case 'addLanguage':
+          // Thêm ngôn ngữ: Tạo file mới
+          vscode.window.showInputBox({ prompt: 'New Language Code (e.g., fr)' }).then(newLang => {
+            if (newLang) {
+              const newFile = path.join(folderPath, `${newLang}.json`);
+              fs.writeFileSync(newFile, '{}');
+              // Reload data
+              const updated = collectData(folderPath);
+              panel.webview.postMessage({ command: 'updateData', ...updated });
+            }
+          });
+          break;
+        case 'renameLanguage':
+          // Rename
+          vscode.window.showInputBox({ prompt: `Rename ${message.lang} to?` }).then(newName => {
+            if (newName) {
+              const oldFile = path.join(folderPath, `${message.lang}.json`);
+              const newFile = path.join(folderPath, `${newName}.json`);
+              fs.renameSync(oldFile, newFile);
+              const updated = collectData(folderPath);
+              panel.webview.postMessage({ command: 'updateData', ...updated });
+            }
+          });
+          break;
+        case 'addKey':
+          // Thêm key mới
+          vscode.window.showInputBox({ prompt: 'New Key (e.g., home.new)' }).then(newKey => {
+            if (newKey) {
+              // Thêm vào tất cả files (value rỗng)
+              languages.forEach(lang => {
+                const filePath = path.join(folderPath, `${lang}.json`);
+                const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                // Giả sử key đơn giản, không nested cho add
+                json[newKey] = ''; // Hoặc prompt value
+                fs.writeFileSync(filePath, JSON.stringify(json, null, 2));
+              });
+              const updated = collectData(folderPath);
+              panel.webview.postMessage({ command: 'updateData', ...updated });
+            }
+          });
+          break;
+        case 'saveCell':
+          // Save thay đổi cell (edit value)
+          const filePath = path.join(folderPath, `${message.lang}.json`);
+          const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          // Giả sử key đơn giản; nếu nested, cần unflatten
+          json[message.key] = message.value;
+          fs.writeFileSync(filePath, JSON.stringify(json, null, 2));
+          break;
+      }
+    });
+  });
+
+  context.subscriptions.push(disposable);
+}
+
+function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, folderPath: string) {
+  // HTML với table
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>i18n Table</title>
+      <style>
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        td.missing { background-color: #ffdddd; } /* Highlight thiếu */
+        input[type="checkbox"] { margin-right: 5px; }
+      </style>
+    </head>
+    <body>
+      <h1>i18n Table Editor</h1>
+      <button onclick="addLanguage()">Add Language</button>
+      <button onclick="addKey()">Add Key</button>
+      <div id="columns">Columns: </div>
+      <table id="i18nTable">
+        <thead><tr><th>Key</th></tr></thead> <!-- Columns động -->
+        <tbody></tbody>
+      </table>
+
+      <script>
+        const vscode = acquireVsCodeApi();
+        let currentData = ${JSON.stringify({ languages, keys, data })};
+        let hiddenColumns = new Set();
+
+        function renderTable() {
+          const table = document.getElementById('i18nTable');
+          const thead = table.querySelector('thead tr');
+          const tbody = table.querySelector('tbody');
+          thead.innerHTML = '<th>Key</th>';
+          currentData.languages.forEach(lang => {
+            if (!hiddenColumns.has(lang)) {
+              const th = document.createElement('th');
+              th.textContent = lang;
+              const renameBtn = document.createElement('button');
+              renameBtn.textContent = 'Rename';
+              renameBtn.onclick = () => vscode.postMessage({ command: 'renameLanguage', lang });
+              th.appendChild(renameBtn);
+              thead.appendChild(th);
+            }
+          });
+
+          tbody.innerHTML = '';
+          currentData.keys.forEach(key => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + key + '</td>';
+            currentData.languages.forEach(lang => {
+              if (!hiddenColumns.has(lang)) {
+                const value = currentData.data[lang][key] || '';
+                const td = document.createElement('td');
+                td.contentEditable = true;
+                td.textContent = value;
+                if (!value) td.classList.add('missing');
+                td.onblur = () => vscode.postMessage({ command: 'saveCell', key, lang, value: td.textContent });
+                tr.appendChild(td);
+              }
+            });
+            tbody.appendChild(tr);
+          });
+
+          // Columns control
+          const columnsDiv = document.getElementById('columns');
+          columnsDiv.innerHTML = 'Columns: ';
+          currentData.languages.forEach(lang => {
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = !hiddenColumns.has(lang);
+            cb.onchange = () => {
+              if (cb.checked) hiddenColumns.delete(lang);
+              else hiddenColumns.add(lang);
+              renderTable();
+            };
+            columnsDiv.appendChild(cb);
+            columnsDiv.appendChild(document.createTextNode(lang + ' '));
+          });
+        }
+
+        function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
+        function addKey() { vscode.postMessage({ command: 'addKey' }); }
+
+        window.addEventListener('message', event => {
+          const message = event.data;
+          if (message.command === 'updateData') {
+            currentData = message;
+            renderTable();
+          }
+        });
+
+        renderTable(); // Initial render
+      </script>
+    </body>
+    </html>
+  `;
+}
+
 export function deactivate() {}
