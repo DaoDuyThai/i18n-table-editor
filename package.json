@@ -1,7 +1,7 @@
 {
-  "name": "i18n-table-editor",
-  "displayName": "i18n Table Editor",
-  "description": "A powerful table editor for managing i18n translation files",
+  "name": "locale-languages-json-table-editor",
+  "displayName": "Locale Languages JSON Table Editor",
+  "description": "A powerful table editor for managing translation files in JSON format",
   "version": "1.0.0",
   "engines": {
     "vscode": "^1.74.0"
@@ -10,30 +10,30 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:i18nTableEditor.openTable"
+    "onCommand:localeLanguagesJsonTableEditor.openTable"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "i18nTableEditor.openTable",
-        "title": "Open i18n Table Editor",
+        "command": "localeLanguagesJsonTableEditor.openTable",
+        "title": "Open Locale Languages JSON Table Editor",
         "icon": "$(globe)"
       }
     ],
     "views": {
       "explorer": [
         {
-          "id": "i18nTableEditor.sidebar",
-          "name": "i18n Table Editor",
+          "id": "localeLanguagesJsonTableEditor.sidebar",
+          "name": "Locale Languages JSON Table Editor",
           "when": "true"
         }
       ]
     },
     "configuration": {
-      "title": "i18n Table Editor",
+      "title": "Locale Languages JSON Table Editor",
       "properties": {
-        "i18nTableEditor.copyTemplate": {
+        "localeLanguagesJsonTableEditor.copyTemplate": {
           "type": "string",
           "default": "t('{key}')",
           "description": "Template for copying keys. Use {key} as placeholder.",
@@ -45,7 +45,7 @@
             "AppLocalizations.of(context)!.{key}"
           ]
         },
-        "i18nTableEditor.defaultCopyMode": {
+        "localeLanguagesJsonTableEditor.defaultCopyMode": {
           "type": "string",
           "enum": [
             "plain",
@@ -58,7 +58,7 @@
             "Copy with template applied"
           ]
         },
-        "i18nTableEditor.templates": {
+        "localeLanguagesJsonTableEditor.templates": {
           "type": "object",
           "default": {
             "react-i18next": "t('{key}')",
