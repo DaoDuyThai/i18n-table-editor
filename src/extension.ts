@@ -90,11 +90,19 @@ export function activate(context: vscode.ExtensionContext) {
   let currentFolderPath: string | undefined;
   let panel: vscode.WebviewPanel | undefined;
 
+  const selectFolder = async (): Promise<string | undefined> => {
+    const folderUri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Select i18n Folder' });
+    if (!folderUri || folderUri.length === 0) {
+      vscode.window.showErrorMessage('No folder selected');
+      return undefined;
+    }
+    return folderUri[0].fsPath;
+  };
+
   const createWebview = async () => {
     if (!currentFolderPath) {
-      const folderUri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Select i18n Folder' });
-      if (!folderUri || folderUri.length === 0) return;
-      currentFolderPath = folderUri[0].fsPath;
+      currentFolderPath = await selectFolder();
+      if (!currentFolderPath) return;
     }
 
     if (panel) panel.dispose();
@@ -106,13 +114,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     const updateWebview = () => {
-      if (!currentFolderPath) return;
+      if (!currentFolderPath || !panel) return;
       try {
         const { languages, keys, data, missing } = collectData(currentFolderPath);
-        if (panel) {
-          panel.webview.html = getWebviewContent(languages, keys, data, missing);
-          panel.webview.postMessage({ command: 'updateData', languages, keys, data, missing });
-        }
+        panel.webview.html = getWebviewContent(languages, keys, data, missing);
+        panel.webview.postMessage({ command: 'updateData', languages, keys, data, missing });
       } catch (e) {
         const error = e as Error;
         vscode.window.showErrorMessage(`Error updating Webview: ${error.message}`);
@@ -131,13 +137,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // Xử lý message từ Webview
-    panel.webview.onDidReceiveMessage(message => {
-      if (!currentFolderPath) return;
+    panel.webview.onDidReceiveMessage(async message => {
+      if (!currentFolderPath) {
+        currentFolderPath = await selectFolder();
+        if (!currentFolderPath) return;
+      }
       switch (message.command) {
         case 'addLanguage':
           vscode.window.showInputBox({ prompt: 'New Language Code (e.g., fr)' }).then(newLang => {
             if (newLang) {
-              const newFile = path.join(currentFolderPath, `${newLang}.json`);
+              const newFile = path.join(currentFolderPath!, `${newLang}.json`);
               try {
                 fs.writeFileSync(newFile, '{}');
                 updateWebview();
@@ -151,8 +160,8 @@ export function activate(context: vscode.ExtensionContext) {
         case 'renameLanguage':
           vscode.window.showInputBox({ prompt: `Rename ${message.lang} to?` }).then(newName => {
             if (newName) {
-              const oldFile = path.join(currentFolderPath, `${message.lang}.json`);
-              const newFile = path.join(currentFolderPath, `${newName}.json`);
+              const oldFile = path.join(currentFolderPath!, `${message.lang}.json`);
+              const newFile = path.join(currentFolderPath!, `${newName}.json`);
               try {
                 fs.renameSync(oldFile, newFile);
                 updateWebview();
@@ -166,9 +175,9 @@ export function activate(context: vscode.ExtensionContext) {
         case 'addKey':
           vscode.window.showInputBox({ prompt: 'New Key (e.g., home.new)' }).then(newKey => {
             if (newKey) {
-              const { languages } = collectData(currentFolderPath);
+              const { languages } = collectData(currentFolderPath!);
               languages.forEach(lang => {
-                const filePath = path.join(currentFolderPath, `${lang}.json`);
+                const filePath = path.join(currentFolderPath!, `${lang}.json`);
                 try {
                   const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
                   const flat = flattenJson(json);
@@ -184,7 +193,7 @@ export function activate(context: vscode.ExtensionContext) {
           });
           break;
         case 'saveCell':
-          const filePath = path.join(currentFolderPath, `${message.lang}.json`);
+          const filePath = path.join(currentFolderPath!, `${message.lang}.json`);
           try {
             const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
             const flat = flattenJson(json);
@@ -236,7 +245,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('i18nTableEditor.sidebar', sidebarProvider)
   );
-
 }
 
 function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, missing: Record<string, string[]>) {
