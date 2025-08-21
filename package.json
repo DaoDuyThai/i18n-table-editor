@@ -7,7 +7,10 @@
     "vscode": "^1.80.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onCommand:i18nTableEditor.openTable"],
+  "activationEvents": [
+    "onCommand:i18nTableEditor.openTable",
+    "onView:i18nTableEditor.sidebar"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -15,7 +18,25 @@
         "command": "i18nTableEditor.openTable",
         "title": "Open i18n Table Editor"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "i18nTableEditor",
+          "title": "i18n Editor",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "i18nTableEditor": [
+        {
+          "id": "i18nTableEditor.sidebar",
+          "name": "i18n Table",
+          "type": "tree"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

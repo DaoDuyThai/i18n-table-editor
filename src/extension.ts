@@ -9,15 +9,13 @@ function flattenJson(obj: any, prefix = ''): Record<string, string> {
     const value = obj[key];
     const newKey = prefix ? `${prefix}.${key}` : key;
     if (typeof value === 'string') {
-      result[newKey] = value; // Chỉ lấy "text": "text"
+      result[newKey] = value;
     } else if (typeof value === 'object' && value !== null) {
       if (Array.isArray(value)) {
-        // Xử lý array: flatten với index
         value.forEach((item, index) => {
           Object.assign(result, flattenJson(item, `${newKey}[${index}]`));
         });
       } else {
-        // Object: recursive
         Object.assign(result, flattenJson(value, newKey));
       }
     }
@@ -65,14 +63,18 @@ function collectData(folderPath: string): { languages: string[], keys: string[],
 
   languages.forEach(lang => {
     const filePath = path.join(folderPath, `${lang}.json`);
-    const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    const flattened = flattenJson(json);
-    data[lang] = flattened;
-    missing[lang] = [];
-    Object.keys(flattened).forEach(k => allKeys.add(k));
+    try {
+      const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const flattened = flattenJson(json);
+      data[lang] = flattened;
+      missing[lang] = [];
+      Object.keys(flattened).forEach(k => allKeys.add(k));
+    } catch (e) {
+      const error = e as Error;
+      vscode.window.showErrorMessage(`Error reading ${lang}.json: ${error.message}`);
+    }
   });
 
-  // Tìm key thiếu
   languages.forEach(lang => {
     allKeys.forEach(key => {
       if (!(key in data[lang])) {
@@ -85,77 +87,159 @@ function collectData(folderPath: string): { languages: string[], keys: string[],
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  let disposable = vscode.commands.registerCommand('i18nTableEditor.openTable', async () => {
-    const folderUri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Select i18n Folder' });
-    if (!folderUri || folderUri.length === 0) return;
+  let currentFolderPath: string | undefined;
+  let panel: vscode.WebviewPanel | undefined;
 
-    const folderPath = folderUri[0].fsPath;
-    let { languages, keys, data, missing } = collectData(folderPath);
+  const createWebview = async () => {
+    if (!currentFolderPath) {
+      const folderUri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Select i18n Folder' });
+      if (!folderUri || folderUri.length === 0) return;
+      currentFolderPath = folderUri[0].fsPath;
+    }
 
-    const panel = vscode.window.createWebviewPanel(
+    if (panel) panel.dispose();
+    panel = vscode.window.createWebviewPanel(
       'i18nTable',
       'i18n Table Editor',
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    panel.webview.html = getWebviewContent(languages, keys, data, missing, folderPath);
+    const updateWebview = () => {
+      if (!currentFolderPath) return;
+      try {
+        const { languages, keys, data, missing } = collectData(currentFolderPath);
+        if (panel) {
+          panel.webview.html = getWebviewContent(languages, keys, data, missing);
+          panel.webview.postMessage({ command: 'updateData', languages, keys, data, missing });
+        }
+      } catch (e) {
+        const error = e as Error;
+        vscode.window.showErrorMessage(`Error updating Webview: ${error.message}`);
+      }
+    };
 
+    updateWebview();
+
+    // File watcher
+    if (currentFolderPath) {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(currentFolderPath, '*.json'));
+      watcher.onDidChange(() => updateWebview());
+      watcher.onDidCreate(() => updateWebview());
+      watcher.onDidDelete(() => updateWebview());
+      context.subscriptions.push(watcher);
+    }
+
+    // Xử lý message từ Webview
     panel.webview.onDidReceiveMessage(message => {
+      if (!currentFolderPath) return;
       switch (message.command) {
         case 'addLanguage':
           vscode.window.showInputBox({ prompt: 'New Language Code (e.g., fr)' }).then(newLang => {
             if (newLang) {
-              const newFile = path.join(folderPath, `${newLang}.json`);
-              fs.writeFileSync(newFile, '{}');
-              const updated = collectData(folderPath);
-              panel.webview.postMessage({ command: 'updateData', ...updated });
+              const newFile = path.join(currentFolderPath, `${newLang}.json`);
+              try {
+                fs.writeFileSync(newFile, '{}');
+                updateWebview();
+              } catch (e) {
+                const error = e as Error;
+                vscode.window.showErrorMessage(`Error creating ${newLang}.json: ${error.message}`);
+              }
             }
           });
           break;
         case 'renameLanguage':
           vscode.window.showInputBox({ prompt: `Rename ${message.lang} to?` }).then(newName => {
             if (newName) {
-              const oldFile = path.join(folderPath, `${message.lang}.json`);
-              const newFile = path.join(folderPath, `${newName}.json`);
-              fs.renameSync(oldFile, newFile);
-              const updated = collectData(folderPath);
-              panel.webview.postMessage({ command: 'updateData', ...updated });
+              const oldFile = path.join(currentFolderPath, `${message.lang}.json`);
+              const newFile = path.join(currentFolderPath, `${newName}.json`);
+              try {
+                fs.renameSync(oldFile, newFile);
+                updateWebview();
+              } catch (e) {
+                const error = e as Error;
+                vscode.window.showErrorMessage(`Error renaming ${message.lang}: ${error.message}`);
+              }
             }
           });
           break;
         case 'addKey':
           vscode.window.showInputBox({ prompt: 'New Key (e.g., home.new)' }).then(newKey => {
             if (newKey) {
+              const { languages } = collectData(currentFolderPath);
               languages.forEach(lang => {
-                const filePath = path.join(folderPath, `${lang}.json`);
-                const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const flat = flattenJson(json);
-                flat[newKey] = ''; // Thêm key với value rỗng
-                fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+                const filePath = path.join(currentFolderPath, `${lang}.json`);
+                try {
+                  const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                  const flat = flattenJson(json);
+                  flat[newKey] = '';
+                  fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+                } catch (e) {
+                  const error = e as Error;
+                  vscode.window.showErrorMessage(`Error updating ${lang}.json: ${error.message}`);
+                }
               });
-              const updated = collectData(folderPath);
-              panel.webview.postMessage({ command: 'updateData', ...updated });
+              updateWebview();
             }
           });
           break;
         case 'saveCell':
-          const filePath = path.join(folderPath, `${message.lang}.json`);
-          const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-          const flat = flattenJson(json);
-          flat[message.key] = message.value;
-          fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
-          const updated = collectData(folderPath);
-          panel.webview.postMessage({ command: 'updateData', ...updated });
+          const filePath = path.join(currentFolderPath, `${message.lang}.json`);
+          try {
+            const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            const flat = flattenJson(json);
+            flat[message.key] = message.value;
+            fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+            updateWebview();
+          } catch (e) {
+            const error = e as Error;
+            vscode.window.showErrorMessage(`Error saving ${message.lang}.json: ${error.message}`);
+          }
+          break;
+        case 'refresh':
+          updateWebview();
           break;
       }
     });
-  });
 
-  context.subscriptions.push(disposable);
+    panel.onDidDispose(() => {
+      panel = undefined;
+    });
+  };
+
+  // Command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('i18nTableEditor.openTable', createWebview)
+  );
+
+  // Sidebar View
+  class I18nTableSidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+    getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+      return element;
+    }
+
+    getChildren(): vscode.TreeItem[] {
+      const item = new vscode.TreeItem('Open i18n Table', vscode.TreeItemCollapsibleState.None);
+      item.command = {
+        command: 'i18nTableEditor.openTable',
+        title: 'Open i18n Table Editor',
+        tooltip: 'Open the i18n Table Editor'
+      };
+      return [item];
+    }
+  }
+
+  const sidebarProvider = new I18nTableSidebarProvider();
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('i18nTableEditor.sidebar', sidebarProvider)
+  );
+
 }
 
-function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, missing: Record<string, string[]>, folderPath: string) {
+function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, missing: Record<string, string[]>) {
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -163,27 +247,30 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>i18n Table Editor</title>
+      <script src="https://cdn.tailwindcss.com"></script>
       <style>
         table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        td.missing { background-color: #ffdddd; }
-        input[type="checkbox"] { margin-right: 5px; }
+        th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+        td.missing { background-color: #fee2e2; }
+        #columns { margin: 10px 0; }
         #missingReport { margin-top: 20px; }
-        button { margin: 5px; }
       </style>
     </head>
-    <body>
-      <h1>i18n Table Editor</h1>
-      <button onclick="addLanguage()">Add Language</button>
-      <button onclick="addKey()">Add Key</button>
-      <div id="columns">Columns: </div>
-      <table id="i18nTable">
-        <thead><tr><th>Key</th></tr></thead>
+    <body class="p-4 bg-gray-50">
+      <h1 class="text-2xl font-bold mb-4">i18n Table Editor</h1>
+      <div class="flex space-x-2 mb-4">
+        <button onclick="addLanguage()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition">Add Language</button>
+        <button onclick="addKey()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md transition">Add Key</button>
+        <button onclick="refresh()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition">Refresh</button>
+      </div>
+      <div id="columns" class="text-sm">Columns: </div>
+      <table id="i18nTable" class="bg-white shadow rounded-md">
+        <thead><tr class="bg-gray-100"><th class="font-semibold">Key</th></tr></thead>
         <tbody></tbody>
       </table>
-      <div id="missingReport">
-        <h2>Missing Keys Report</h2>
-        <ul id="missingList"></ul>
+      <div id="missingReport" class="mt-4">
+        <h2 class="text-lg font-semibold">Missing Keys Report</h2>
+        <ul id="missingList" class="list-disc pl-5"></ul>
       </div>
 
       <script>
@@ -195,15 +282,12 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           const table = document.getElementById('i18nTable');
           const thead = table.querySelector('thead tr');
           const tbody = table.querySelector('tbody');
-          thead.innerHTML = '<th>Key</th>';
+          thead.innerHTML = '<th class="font-semibold">Key</th>';
           currentData.languages.forEach(lang => {
             if (!hiddenColumns.has(lang)) {
               const th = document.createElement('th');
-              th.textContent = lang;
-              const renameBtn = document.createElement('button');
-              renameBtn.textContent = 'Rename';
-              renameBtn.onclick = () => vscode.postMessage({ command: 'renameLanguage', lang });
-              th.appendChild(renameBtn);
+              th.className = 'font-semibold';
+              th.innerHTML = \`\${lang} <button class="ml-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm px-2 py-1 rounded-md transition" onclick="renameLanguage('\${lang}')">Rename</button>\`;
               thead.appendChild(th);
             }
           });
@@ -226,13 +310,13 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
             tbody.appendChild(tr);
           });
 
-          // Columns control
           const columnsDiv = document.getElementById('columns');
           columnsDiv.innerHTML = 'Columns: ';
           currentData.languages.forEach(lang => {
             const cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.checked = !hiddenColumns.has(lang);
+            cb.className = 'mr-1';
             cb.onchange = () => {
               if (cb.checked) hiddenColumns.delete(lang);
               else hiddenColumns.add(lang);
@@ -242,7 +326,6 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
             columnsDiv.appendChild(document.createTextNode(lang + ' '));
           });
 
-          // Missing keys report
           const missingList = document.getElementById('missingList');
           missingList.innerHTML = '';
           currentData.languages.forEach(lang => {
@@ -256,6 +339,8 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
 
         function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
         function addKey() { vscode.postMessage({ command: 'addKey' }); }
+        function renameLanguage(lang) { vscode.postMessage({ command: 'renameLanguage', lang }); }
+        function refresh() { vscode.postMessage({ command: 'refresh' }); }
 
         window.addEventListener('message', event => {
           const message = event.data;
