@@ -181,6 +181,69 @@ export function activate(context: vscode.ExtensionContext) {
             }
           });
           break;
+        case 'deleteKey':
+          const { languages } = collectData(currentFolderPath!);
+          languages.forEach(lang => {
+            const filePath = path.join(currentFolderPath!, `${lang}.json`);
+            try {
+              const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              const flat = flattenJson(json);
+              delete flat[message.key];
+              fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+            } catch (e) {
+              const error = e as Error;
+              vscode.window.showErrorMessage(`Error deleting key from ${lang}.json: ${error.message}`);
+            }
+          });
+          updateWebview();
+          break;
+        case 'duplicateKey':
+          const { languages: langs } = collectData(currentFolderPath!);
+          langs.forEach(lang => {
+            const filePath = path.join(currentFolderPath!, `${lang}.json`);
+            try {
+              const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              const flat = flattenJson(json);
+              if (flat[message.originalKey]) {
+                flat[message.newKey] = flat[message.originalKey];
+              }
+              fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+            } catch (e) {
+              const error = e as Error;
+              vscode.window.showErrorMessage(`Error duplicating key in ${lang}.json: ${error.message}`);
+            }
+          });
+          updateWebview();
+          break;
+        case 'exportKey':
+          const keyData: any = {};
+          const { languages: exportLangs, data: exportData } = collectData(currentFolderPath!);
+          exportLangs.forEach(lang => {
+            keyData[lang] = exportData[lang][message.key] || '';
+          });
+          vscode.env.clipboard.writeText(JSON.stringify(keyData, null, 2));
+          vscode.window.showInformationMessage(`Key "${message.key}" exported to clipboard!`);
+          break;
+        case 'fillEmptyValues':
+          const { languages: fillLangs } = collectData(currentFolderPath!);
+          fillLangs.forEach(lang => {
+            const filePath = path.join(currentFolderPath!, `${lang}.json`);
+            try {
+              const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              const flat = flattenJson(json);
+              Object.keys(flat).forEach(key => {
+                if (!flat[key] || flat[key].trim() === '') {
+                  flat[key] = `[${key}]`; // Placeholder text
+                }
+              });
+              fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
+            } catch (e) {
+              const error = e as Error;
+              vscode.window.showErrorMessage(`Error filling empty values in ${lang}.json: ${error.message}`);
+            }
+          });
+          updateWebview();
+          break;
         case 'saveCell':
           const filePath = path.join(currentFolderPath!, `${message.lang}.json`);
           try {
@@ -376,6 +439,11 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
         }
         
+        .btn-sm {
+          padding: 6px 12px;
+          font-size: 12px;
+        }
+        
         .search-input {
           background-color: var(--vscode-input-background);
           border: 2px solid var(--vscode-editorWidget-border);
@@ -416,7 +484,7 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         }
         
         tbody tr:nth-child(even) {
-          background-color: rgba(var(--vscode-editorWidget-border), 0.05);
+          background-color: rgba(128, 128, 128, 0.05);
         }
         
         tbody tr:hover {
@@ -437,6 +505,82 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           padding: 4px 8px;
           font-weight: 500;
         }
+        
+        .progress-container {
+          background: var(--vscode-editor-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 8px;
+          padding: 16px;
+          margin-bottom: 16px;
+        }
+        
+        .progress-bar {
+          background-color: rgba(128, 128, 128, 0.2);
+          height: 8px;
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        
+        .progress-fill {
+          background: linear-gradient(90deg, #10b981, #34d399);
+          height: 100%;
+          transition: width 0.5s ease;
+          border-radius: 4px;
+        }
+        
+        .context-menu {
+          position: fixed;
+          background: var(--vscode-menu-background, var(--vscode-editor-background));
+          border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border));
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 1000;
+          min-width: 150px;
+        }
+        
+        .context-menu-item {
+          padding: 8px 12px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-editorWidget-border));
+          font-size: 13px;
+        }
+        
+        .context-menu-item:last-child {
+          border-bottom: none;
+        }
+        
+        .context-menu-item:hover {
+          background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+        }
+        
+        .context-menu-item.danger:hover {
+          background: #dc2626;
+          color: white;
+        }
+        
+        .mass-operations {
+          background: var(--vscode-editor-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 8px;
+        }
+        
+        .selected-key {
+          background: rgba(59, 130, 246, 0.2) !important;
+        }
+        
+        .keyboard-shortcuts {
+          position: fixed;
+          bottom: 10px;
+          right: 10px;
+          background: var(--vscode-editor-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 6px;
+          padding: 8px;
+          font-size: 11px;
+          opacity: 0.7;
+          max-width: 200px;
+        }
       </style>
     </head>
     <body class="p-6">
@@ -445,6 +589,18 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           🌐 i18n Table Editor
         </h1>
         
+        <!-- Progress Bar -->
+        <div id="progressContainer" class="progress-container">
+          <div class="flex justify-between text-sm mb-2">
+            <span class="font-semibold">📊 Translation Progress</span>
+            <span id="progressText">0/0 (0%)</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+          </div>
+        </div>
+        
+        <!-- Action Buttons -->
         <div class="flex flex-wrap gap-3 mb-6">
           <button onclick="addLanguage()" class="btn bg-blue-500 hover:bg-blue-600 text-white px-4 py-2">
             ➕ Add Language
@@ -457,19 +613,51 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           </button>
         </div>
         
-        <div class="mb-6">
+        <!-- Mass Operations -->
+        <div class="mass-operations mb-6 p-4">
+          <div class="flex flex-wrap gap-2 items-center mb-2">
+            <span class="font-semibold">⚡ Bulk Actions:</span>
+            <button onclick="selectAllVisible()" class="btn btn-sm bg-indigo-500 hover:bg-indigo-600 text-white">
+              ☑️ Select All Visible
+            </button>
+            <button onclick="fillEmptyValues()" class="btn btn-sm bg-orange-500 hover:bg-orange-600 text-white">
+              📝 Fill Empty Values
+            </button>
+            <button onclick="exportSelected()" class="btn btn-sm bg-purple-500 hover:bg-purple-600 text-white">
+              📤 Export Selected
+            </button>
+            <button onclick="clearSelection()" class="btn btn-sm bg-gray-500 hover:bg-gray-600 text-white">
+              ❌ Clear Selection
+            </button>
+          </div>
+          <div id="selectedCount" class="text-sm text-gray-400"></div>
+        </div>
+        
+        <!-- Search and Filters -->
+        <div class="search-filters flex gap-3 mb-6">
           <input 
             id="search" 
             placeholder="🔍 Search keys or values..." 
-            class="search-input px-4 py-3 w-full max-w-md text-sm"
+            class="search-input px-4 py-3 flex-1"
           >
+          <select id="filterType" class="search-input px-3 py-3">
+            <option value="all">All Items</option>
+            <option value="missing">Missing Values</option>
+            <option value="empty">Empty Keys</option>
+            <option value="duplicates">Duplicate Values</option>
+          </select>
+          <select id="filterLanguage" class="search-input px-3 py-3">
+            <option value="">All Languages</option>
+          </select>
         </div>
         
+        <!-- Column Controls -->
         <div id="columns" class="mb-6 text-sm">
           <div class="font-semibold mb-3">📋 Visible columns (drag to reorder):</div>
           <div class="flex flex-wrap" id="columnCheckboxes"></div>
         </div>
         
+        <!-- Table -->
         <div class="table-container">
           <div class="overflow-auto" style="max-height: 70vh;">
             <table id="i18nTable">
@@ -479,6 +667,7 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           </div>
         </div>
         
+        <!-- Pagination -->
         <div class="pagination-controls">
           <div class="flex items-center justify-between flex-wrap gap-4">
             <div class="flex items-center space-x-3">
@@ -501,6 +690,15 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
             </div>
           </div>
         </div>
+        
+        <!-- Keyboard Shortcuts Info -->
+        <div class="keyboard-shortcuts">
+          <div class="font-semibold mb-1">⌨️ Shortcuts:</div>
+          <div>Ctrl+F: Search</div>
+          <div>Ctrl+N: Add Key</div>
+          <div>Ctrl+L: Add Language</div>
+          <div>Ctrl+S: Refresh</div>
+        </div>
       </div>
 
       <script>
@@ -515,10 +713,44 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         let sortColumn = 'key';
         let sortDirection = 'asc';
         let filterText = '';
+        let filterType = 'all';
+        let filterLanguage = '';
+        let selectedKeys = new Set();
+        let contextMenu = null;
 
         function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
         function addKey() { vscode.postMessage({ command: 'addKey' }); }
         function refreshData() { vscode.postMessage({ command: 'refresh' }); }
+
+        function calculateProgress() {
+          let total = 0, completed = 0;
+          allKeys.forEach(key => {
+            languages.forEach(lang => {
+              total++;
+              if (allData[lang] && allData[lang][key] && allData[lang][key].trim()) {
+                completed++;
+              }
+            });
+          });
+          return { completed, total, percentage: total > 0 ? Math.round((completed/total) * 100) : 0 };
+        }
+
+        function updateProgress() {
+          const progress = calculateProgress();
+          document.getElementById('progressText').textContent = \`\${progress.completed}/\${progress.total} (\${progress.percentage}%)\`;
+          document.getElementById('progressFill').style.width = \`\${progress.percentage}%\`;
+        }
+
+        function populateLanguageFilter() {
+          const select = document.getElementById('filterLanguage');
+          select.innerHTML = '<option value="">All Languages</option>';
+          languages.forEach(lang => {
+            const option = document.createElement('option');
+            option.value = lang;
+            option.textContent = lang;
+            select.appendChild(option);
+          });
+        }
 
         function renderColumns() {
           const checkboxesDiv = document.getElementById('columnCheckboxes');
@@ -546,6 +778,32 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
             label.appendChild(cb);
             label.appendChild(document.createTextNode(lang));
             checkboxesDiv.appendChild(label);
+          });
+        }
+
+        function filterKeys() {
+          return allKeys.filter(key => {
+            // Text search
+            const keyMatch = key.toLowerCase().includes(filterText.toLowerCase());
+            const valueMatch = languages.some(lang => {
+              const value = allData[lang] && allData[lang][key] ? allData[lang][key] : '';
+              return value.toLowerCase().includes(filterText.toLowerCase());
+            });
+            
+            if (!keyMatch && !valueMatch) return false;
+            
+            // Filter type
+            switch(filterType) {
+              case 'missing':
+                return languages.some(lang => !allData[lang] || !allData[lang][key] || !allData[lang][key].trim());
+              case 'empty':
+                return languages.every(lang => !allData[lang] || !allData[lang][key] || !allData[lang][key].trim());
+              case 'duplicates':
+                const values = languages.map(lang => allData[lang] && allData[lang][key] ? allData[lang][key] : '').filter(v => v.trim());
+                return new Set(values).size < values.length;
+              default:
+                return true;
+            }
           });
         }
 
@@ -581,23 +839,16 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           });
           tableHead.appendChild(headerRow);
 
-          // Filter keys and values
-          let filteredKeys = allKeys.filter(key => {
-            const keyMatch = key.toLowerCase().includes(filterText.toLowerCase());
-            const valueMatch = languages.some(lang => {
-              const value = allData[lang][key] || '';
-              return value.toLowerCase().includes(filterText.toLowerCase());
-            });
-            return keyMatch || valueMatch;
-          });
+          // Filter and sort keys
+          let filteredKeys = filterKeys();
 
           // Sort
           filteredKeys.sort((a, b) => {
             if (sortColumn === 'key') {
               return sortDirection === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
             } else {
-              const valA = allData[sortColumn][a] || '';
-              const valB = allData[sortColumn][b] || '';
+              const valA = allData[sortColumn] && allData[sortColumn][a] ? allData[sortColumn][a] : '';
+              const valB = allData[sortColumn] && allData[sortColumn][b] ? allData[sortColumn][b] : '';
               return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
             }
           });
@@ -609,13 +860,23 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
 
           pageKeys.forEach((key, index) => {
             const tr = document.createElement('tr');
+            if (selectedKeys.has(key)) {
+              tr.classList.add('selected-key');
+            }
+            
             columnOrder.forEach(col => {
               if (col === 'key' || visibleColumns.has(col)) {
                 const td = document.createElement('td');
                 if (col === 'key') {
                   td.innerHTML = \`<div class="font-mono text-sm">\${key}</div>\`;
+                  td.oncontextmenu = (e) => showContextMenu(e, key);
+                  td.onclick = (e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      toggleKeySelection(key);
+                    }
+                  };
                 } else {
-                  const value = allData[col][key] || '';
+                  const value = allData[col] && allData[col][key] ? allData[col][key] : '';
                   td.innerHTML = \`<div>\${value}</div>\`;
                   td.contentEditable = 'true';
                   td.dataset.key = key;
@@ -635,6 +896,9 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           document.getElementById('pageInfo').textContent = \`Page \${currentPage + 1} of \${totalPages} (\${filteredKeys.length} items)\`;
           document.querySelector('button[onclick="prevPage()"]').disabled = currentPage === 0;
           document.querySelector('button[onclick="nextPage()"]').disabled = end >= filteredKeys.length;
+          
+          updateSelectedCount();
+          updateProgress();
         }
 
         function sortByColumn(col) {
@@ -655,7 +919,7 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         function handleCellBlur(e) {
           const td = e.target;
           const newValue = td.textContent.trim();
-          const oldValue = allData[td.dataset.lang][td.dataset.key] || '';
+          const oldValue = allData[td.dataset.lang] && allData[td.dataset.lang][td.dataset.key] ? allData[td.dataset.lang][td.dataset.key] : '';
           if (newValue !== oldValue) {
             vscode.postMessage({ command: 'saveCell', key: td.dataset.key, lang: td.dataset.lang, value: newValue });
           }
@@ -674,21 +938,133 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         }
 
         function nextPage() {
-          const filteredKeys = allKeys.filter(key => {
-            const keyMatch = key.toLowerCase().includes(filterText.toLowerCase());
-            const valueMatch = languages.some(lang => {
-              const value = allData[lang][key] || '';
-              return value.toLowerCase().includes(filterText.toLowerCase());
-            });
-            return keyMatch || valueMatch;
-          });
-          
+          const filteredKeys = filterKeys();
           if ((currentPage + 1) * pageSize < filteredKeys.length) {
             currentPage++;
             renderTable();
           }
         }
 
+        // Context Menu Functions
+        function showContextMenu(e, key) {
+          e.preventDefault();
+          
+          if (contextMenu) contextMenu.remove();
+          
+          contextMenu = document.createElement('div');
+          contextMenu.className = 'context-menu';
+          contextMenu.innerHTML = \`
+            <div class="context-menu-item" onclick="duplicateKey('\${key}')">
+              📋 Duplicate Key
+            </div>
+            <div class="context-menu-item" onclick="exportKey('\${key}')">
+              📤 Export Key
+            </div>
+            <div class="context-menu-item" onclick="toggleKeySelection('\${key}')">
+              \${selectedKeys.has(key) ? '❌ Deselect' : '☑️ Select'}
+            </div>
+            <div class="context-menu-item danger" onclick="deleteKey('\${key}')">
+              🗑️ Delete Key
+            </div>
+          \`;
+          
+          contextMenu.style.left = e.pageX + 'px';
+          contextMenu.style.top = e.pageY + 'px';
+          
+          document.body.appendChild(contextMenu);
+          
+          setTimeout(() => {
+            document.addEventListener('click', closeContextMenu);
+          }, 100);
+        }
+
+        function closeContextMenu() {
+          if (contextMenu) {
+            contextMenu.remove();
+            contextMenu = null;
+          }
+          document.removeEventListener('click', closeContextMenu);
+        }
+
+        function deleteKey(key) {
+          if (confirm(\`Are you sure you want to delete key "\${key}"?\`)) {
+            vscode.postMessage({ command: 'deleteKey', key: key });
+          }
+          closeContextMenu();
+        }
+
+        function duplicateKey(key) {
+          const newKey = prompt(\`New key name (duplicating "\${key}"):\`, key + '_copy');
+          if (newKey && newKey !== key) {
+            vscode.postMessage({ command: 'duplicateKey', originalKey: key, newKey: newKey });
+          }
+          closeContextMenu();
+        }
+
+        function exportKey(key) {
+          vscode.postMessage({ command: 'exportKey', key: key });
+          closeContextMenu();
+        }
+
+        // Selection Functions
+        function toggleKeySelection(key) {
+          if (selectedKeys.has(key)) {
+            selectedKeys.delete(key);
+          } else {
+            selectedKeys.add(key);
+          }
+          renderTable();
+          closeContextMenu();
+        }
+
+        function selectAllVisible() {
+          const filteredKeys = filterKeys();
+          const start = currentPage * pageSize;
+          const end = start + pageSize;
+          const pageKeys = filteredKeys.slice(start, end);
+          
+          pageKeys.forEach(key => selectedKeys.add(key));
+          renderTable();
+        }
+
+        function clearSelection() {
+          selectedKeys.clear();
+          renderTable();
+        }
+
+        function updateSelectedCount() {
+          const count = selectedKeys.size;
+          document.getElementById('selectedCount').textContent = 
+            count > 0 ? \`\${count} key(s) selected\` : '';
+        }
+
+        function fillEmptyValues() {
+          if (confirm('Fill all empty values with placeholder text?')) {
+            vscode.postMessage({ command: 'fillEmptyValues' });
+          }
+        }
+
+        function exportSelected() {
+          if (selectedKeys.size === 0) {
+            alert('No keys selected');
+            return;
+          }
+          
+          const exportData = {};
+          selectedKeys.forEach(key => {
+            exportData[key] = {};
+            languages.forEach(lang => {
+              exportData[key][lang] = allData[lang] && allData[lang][key] ? allData[lang][key] : '';
+            });
+          });
+          
+          const jsonString = JSON.stringify(exportData, null, 2);
+          navigator.clipboard.writeText(jsonString).then(() => {
+            alert(\`\${selectedKeys.size} keys exported to clipboard!\`);
+          });
+        }
+
+        // Drag and Drop Functions
         function dragStart(e) {
           e.dataTransfer.setData('text/plain', e.target.dataset.lang);
         }
@@ -735,8 +1111,21 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           }
         }
 
+        // Event Listeners
         document.getElementById('search').addEventListener('input', (e) => {
           filterText = e.target.value;
+          currentPage = 0;
+          renderTable();
+        });
+
+        document.getElementById('filterType').addEventListener('change', (e) => {
+          filterType = e.target.value;
+          currentPage = 0;
+          renderTable();
+        });
+
+        document.getElementById('filterLanguage').addEventListener('change', (e) => {
+          filterLanguage = e.target.value;
           currentPage = 0;
           renderTable();
         });
@@ -747,7 +1136,43 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           renderTable();
         });
 
+        // Keyboard Shortcuts
+        document.addEventListener('keydown', (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            switch(e.key) {
+              case 'f':
+                e.preventDefault();
+                document.getElementById('search').focus();
+                break;
+              case 's':
+                e.preventDefault();
+                vscode.postMessage({command: 'refresh'});
+                break;
+              case 'n':
+                e.preventDefault();
+                addKey();
+                break;
+              case 'l':
+                e.preventDefault();
+                addLanguage();
+                break;
+              case 'a':
+                if (e.target.closest('table')) {
+                  e.preventDefault();
+                  selectAllVisible();
+                }
+                break;
+            }
+          }
+          
+          if (e.key === 'Escape') {
+            clearSelection();
+            closeContextMenu();
+          }
+        });
+
         // Initialize
+        populateLanguageFilter();
         renderColumns();
         renderTable();
       </script>
