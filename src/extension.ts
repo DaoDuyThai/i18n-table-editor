@@ -256,15 +256,56 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>i18n Table Editor</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <script>
+        tailwind.config = {
+          darkMode: 'class',
+          theme: {
+            extend: {
+              colors: {
+                'vscode-bg': 'var(--vscode-editor-background)',
+                'vscode-fg': 'var(--vscode-editor-foreground)',
+                'vscode-missing': 'var(--vscode-editorError-background)',
+              }
+            }
+          }
+        }
+      </script>
       <style>
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
-        td.missing { background-color: #fee2e2; }
-        #columns { margin: 10px 0; }
-        #missingReport { margin-top: 20px; }
+        body {
+          background-color: var(--vscode-editor-background);
+          color: var(--vscode-editor-foreground);
+        }
+        table {
+          border-collapse: collapse;
+          width: 100%;
+        }
+        th, td {
+          border: 1px solid var(--vscode-editorWidget-border);
+          padding: 8px;
+          text-align: left;
+        }
+        td.missing {
+          background-color: var(--vscode-editorError-background);
+        }
+        #columns {
+          margin: 10px 0;
+        }
+        #missingReport {
+          margin-top: 20px;
+        }
+        td:focus {
+          outline: none;
+          box-shadow: 0 0 0 2px var(--vscode-focusBorder);
+        }
+        .bg-vscode-bg {
+          background-color: var(--vscode-editor-background);
+        }
+        .text-vscode-fg {
+          color: var(--vscode-editor-foreground);
+        }
       </style>
     </head>
-    <body class="p-4 bg-gray-50">
+    <body class="p-4">
       <h1 class="text-2xl font-bold mb-4">i18n Table Editor</h1>
       <div class="flex space-x-2 mb-4">
         <button onclick="addLanguage()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md transition">Add Language</button>
@@ -272,8 +313,8 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         <button onclick="refresh()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition">Refresh</button>
       </div>
       <div id="columns" class="text-sm">Columns: </div>
-      <table id="i18nTable" class="bg-white shadow rounded-md">
-        <thead><tr class="bg-gray-100"><th class="font-semibold">Key</th></tr></thead>
+      <table id="i18nTable" class="shadow rounded-md bg-vscode-bg text-vscode-fg">
+        <thead><tr class="bg-gray-100 dark:bg-gray-800"><th class="font-semibold">Key</th></tr></thead>
         <tbody></tbody>
       </table>
       <div id="missingReport" class="mt-4">
