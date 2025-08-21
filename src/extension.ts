@@ -2,6 +2,13 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Configuration interface
+interface ExtensionConfig {
+  copyTemplate: string;
+  defaultCopyMode: 'plain' | 'template';
+  templates: Record<string, string>;
+}
+
 // Flatten JSON để lấy key-value (chỉ string values)
 function flattenJson(obj: any, prefix = ''): Record<string, string> {
   let result: Record<string, string> = {};
@@ -76,6 +83,23 @@ function collectData(folderPath: string): { languages: string[], keys: string[],
   return { languages, keys: Array.from(allKeys).sort(), data };
 }
 
+// Get extension configuration
+function getConfig(): ExtensionConfig {
+  const config = vscode.workspace.getConfiguration('i18nTableEditor');
+  return {
+    copyTemplate: config.get('copyTemplate', "t('{key}')"),
+    defaultCopyMode: config.get('defaultCopyMode', 'plain'),
+    templates: config.get('templates', {
+      'react-i18next': "t('{key}')",
+      'react-i18next-trans': "<Trans i18nKey=\"{key}\" />",
+      'vue-i18n': "$t('{key}')",
+      'angular-i18n': "{{ '{key}' | translate }}",
+      'flutter-intl': "AppLocalizations.of(context)!.{key}",
+      'custom': config.get('copyTemplate', "t('{key}')")
+    })
+  };
+}
+
 export function activate(context: vscode.ExtensionContext) {
   let currentFolderPath: string | undefined;
   let panel: vscode.WebviewPanel | undefined;
@@ -107,7 +131,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (!currentFolderPath || !panel) return;
       try {
         const { languages, keys, data } = collectData(currentFolderPath);
-        panel.webview.html = getWebviewContent(languages, keys, data);
+        const config = getConfig();
+        panel.webview.html = getWebviewContent(languages, keys, data, config);
       } catch (e) {
         const error = e as Error;
         vscode.window.showErrorMessage(`Error updating Webview: ${error.message}`);
@@ -124,6 +149,14 @@ export function activate(context: vscode.ExtensionContext) {
       watcher.onDidDelete(() => updateWebview());
       context.subscriptions.push(watcher);
     }
+
+    // Configuration change watcher
+    const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('i18nTableEditor')) {
+        updateWebview();
+      }
+    });
+    context.subscriptions.push(configWatcher);
 
     // Xử lý message từ Webview
     panel.webview.onDidReceiveMessage(async message => {
@@ -215,34 +248,22 @@ export function activate(context: vscode.ExtensionContext) {
           });
           updateWebview();
           break;
-        case 'exportKey':
-          const keyData: any = {};
-          const { languages: exportLangs, data: exportData } = collectData(currentFolderPath!);
-          exportLangs.forEach(lang => {
-            keyData[lang] = exportData[lang][message.key] || '';
-          });
-          vscode.env.clipboard.writeText(JSON.stringify(keyData, null, 2));
-          vscode.window.showInformationMessage(`Key "${message.key}" exported to clipboard!`);
+        case 'copyKey':
+          const config = getConfig();
+          let textToCopy = message.key;
+          
+          if (message.useTemplate || config.defaultCopyMode === 'template') {
+            textToCopy = config.copyTemplate.replace('{key}', message.key);
+          }
+          
+          vscode.env.clipboard.writeText(textToCopy);
+          vscode.window.showInformationMessage(`Copied: ${textToCopy}`);
           break;
-        case 'fillEmptyValues':
-          const { languages: fillLangs } = collectData(currentFolderPath!);
-          fillLangs.forEach(lang => {
-            const filePath = path.join(currentFolderPath!, `${lang}.json`);
-            try {
-              const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-              const flat = flattenJson(json);
-              Object.keys(flat).forEach(key => {
-                if (!flat[key] || flat[key].trim() === '') {
-                  flat[key] = `[${key}]`; // Placeholder text
-                }
-              });
-              fs.writeFileSync(filePath, JSON.stringify(unflattenJson(flat), null, 2));
-            } catch (e) {
-              const error = e as Error;
-              vscode.window.showErrorMessage(`Error filling empty values in ${lang}.json: ${error.message}`);
-            }
-          });
-          updateWebview();
+        case 'updateConfig':
+          const configuration = vscode.workspace.getConfiguration('i18nTableEditor');
+          await configuration.update(message.key, message.value, vscode.ConfigurationTarget.Global);
+          vscode.window.showInformationMessage(`Updated ${message.key} to: ${message.value}`);
+          updateWebview(); // Refresh to show the new settings
           break;
         case 'saveCell':
           const filePath = path.join(currentFolderPath!, `${message.lang}.json`);
@@ -256,6 +277,9 @@ export function activate(context: vscode.ExtensionContext) {
             const error = e as Error;
             vscode.window.showErrorMessage(`Error saving ${message.lang}.json: ${error.message}`);
           }
+          break;
+        case 'openSettings':
+          vscode.commands.executeCommand('workbench.action.openSettings', 'i18nTableEditor');
           break;
         case 'refresh':
           updateWebview();
@@ -299,7 +323,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>) {
+function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, config: ExtensionConfig) {
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -559,16 +583,6 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           color: white;
         }
         
-        .mass-operations {
-          background: var(--vscode-editor-background);
-          border: 1px solid var(--vscode-editorWidget-border);
-          border-radius: 8px;
-        }
-        
-        .selected-key {
-          background: rgba(59, 130, 246, 0.2) !important;
-        }
-        
         .keyboard-shortcuts {
           position: fixed;
           bottom: 10px;
@@ -581,6 +595,70 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           opacity: 0.7;
           max-width: 200px;
         }
+
+        .key-cell {
+          cursor: pointer;
+          position: relative;
+        }
+
+        .key-cell:hover::after {
+          content: "Double-click to copy";
+          position: absolute;
+          top: -25px;
+          left: 0;
+          background: var(--vscode-editorHoverWidget-background);
+          color: var(--vscode-editorHoverWidget-foreground);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 11px;
+          white-space: nowrap;
+          z-index: 1000;
+          border: 1px solid var(--vscode-editorHoverWidget-border);
+        }
+
+        .settings-panel {
+          background: var(--vscode-editor-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 8px;
+          padding: 16px;
+          margin-bottom: 16px;
+        }
+
+        .template-preview {
+          background: var(--vscode-input-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 4px;
+          padding: 8px;
+          font-family: monospace;
+          font-size: 12px;
+          margin-top: 8px;
+          color: var(--vscode-editor-foreground);
+        }
+
+        .template-grid-item {
+          background: var(--vscode-editor-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          border-radius: 4px;
+          padding: 8px;
+          color: var(--vscode-editor-foreground);
+        }
+
+        .template-input {
+          background: var(--vscode-input-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          color: var(--vscode-editor-foreground);
+          border-radius: 4px;
+          padding: 8px;
+          font-family: monospace;
+          font-size: 12px;
+          width: 100%;
+        }
+
+        .template-input:focus {
+          outline: none;
+          border-color: var(--vscode-focusBorder);
+          box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+        }
       </style>
     </head>
     <body class="p-6">
@@ -588,6 +666,54 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         <h1 class="text-3xl font-bold mb-6 text-center bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
           🌐 i18n Table Editor
         </h1>
+        
+        <!-- Settings Panel -->
+        <div class="settings-panel">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">⚙️ Copy Settings</h2>
+            <button onclick="openSettings()" class="btn bg-gray-500 hover:bg-gray-600 text-white btn-sm">
+              Open VS Code Settings
+            </button>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">Current Template:</label>
+              <input 
+                id="currentTemplate" 
+                type="text" 
+                value="${config.copyTemplate}" 
+                class="template-input"
+                onchange="updateTemplate(this.value)"
+                placeholder="Enter template with {key} placeholder"
+              />
+              <div class="text-xs text-gray-400 mt-1">Use {key} as placeholder for the translation key</div>
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium mb-2">Default Copy Mode:</label>
+              <select id="copyModeSelect" class="search-input px-3 py-2 w-full" onchange="updateCopyMode(this.value)">
+                <option value="plain" ${config.defaultCopyMode === 'plain' ? 'selected' : ''}>Plain Key Mode</option>
+                <option value="template" ${config.defaultCopyMode === 'template' ? 'selected' : ''}>Template Mode</option>
+              </select>
+              <div class="text-xs text-gray-400 mt-1">
+                Default behavior when double-clicking keys
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <label class="block text-sm font-medium mb-2">Quick Templates:</label>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+              ${Object.entries(config.templates).map(([name, template]) => 
+                `<div class="template-grid-item cursor-pointer hover:bg-gray-600 transition-colors" onclick="setTemplate('${template.replace(/'/g, "\\'")}')">
+                  <div class="font-semibold text-blue-400">${name}:</div>
+                  <code class="text-xs text-green-400 break-all">${template}</code>
+                </div>`
+              ).join('')}
+            </div>
+          </div>
+        </div>
         
         <!-- Progress Bar -->
         <div id="progressContainer" class="progress-container">
@@ -611,26 +737,6 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           <button onclick="refreshData()" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2">
             🔄 Refresh
           </button>
-        </div>
-        
-        <!-- Mass Operations -->
-        <div class="mass-operations mb-6 p-4">
-          <div class="flex flex-wrap gap-2 items-center mb-2">
-            <span class="font-semibold">⚡ Bulk Actions:</span>
-            <button onclick="selectAllVisible()" class="btn btn-sm bg-indigo-500 hover:bg-indigo-600 text-white">
-              ☑️ Select All Visible
-            </button>
-            <button onclick="fillEmptyValues()" class="btn btn-sm bg-orange-500 hover:bg-orange-600 text-white">
-              📝 Fill Empty Values
-            </button>
-            <button onclick="exportSelected()" class="btn btn-sm bg-purple-500 hover:bg-purple-600 text-white">
-              📤 Export Selected
-            </button>
-            <button onclick="clearSelection()" class="btn btn-sm bg-gray-500 hover:bg-gray-600 text-white">
-              ❌ Clear Selection
-            </button>
-          </div>
-          <div id="selectedCount" class="text-sm text-gray-400"></div>
         </div>
         
         <!-- Search and Filters -->
@@ -698,6 +804,8 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           <div>Ctrl+N: Add Key</div>
           <div>Ctrl+L: Add Language</div>
           <div>Ctrl+S: Refresh</div>
+          <div>Double-click key: Copy</div>
+          <div>Shift+Double-click: Copy with template</div>
         </div>
       </div>
 
@@ -706,6 +814,7 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         let allKeys = ${JSON.stringify(keys)};
         let allData = ${JSON.stringify(data)};
         let languages = ${JSON.stringify(languages)};
+        let config = ${JSON.stringify(config)};
         let columnOrder = ['key', ...languages];
         let visibleColumns = new Set(languages);
         let currentPage = 0;
@@ -715,12 +824,35 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
         let filterText = '';
         let filterType = 'all';
         let filterLanguage = '';
-        let selectedKeys = new Set();
         let contextMenu = null;
 
         function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
         function addKey() { vscode.postMessage({ command: 'addKey' }); }
         function refreshData() { vscode.postMessage({ command: 'refresh' }); }
+        function openSettings() { vscode.postMessage({ command: 'openSettings' }); }
+
+        function updateTemplate(newTemplate) {
+          config.copyTemplate = newTemplate;
+          vscode.postMessage({ command: 'updateConfig', key: 'copyTemplate', value: newTemplate });
+        }
+
+        function updateCopyMode(newMode) {
+          config.defaultCopyMode = newMode;
+          vscode.postMessage({ command: 'updateConfig', key: 'defaultCopyMode', value: newMode });
+        }
+
+        function setTemplate(template) {
+          document.getElementById('currentTemplate').value = template;
+          updateTemplate(template);
+        }
+
+        function copyKey(key, useTemplate = false) {
+          vscode.postMessage({ 
+            command: 'copyKey', 
+            key: key,
+            useTemplate: useTemplate || config.defaultCopyMode === 'template'
+          });
+        }
 
         function calculateProgress() {
           let total = 0, completed = 0;
@@ -860,20 +992,17 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
 
           pageKeys.forEach((key, index) => {
             const tr = document.createElement('tr');
-            if (selectedKeys.has(key)) {
-              tr.classList.add('selected-key');
-            }
             
             columnOrder.forEach(col => {
               if (col === 'key' || visibleColumns.has(col)) {
                 const td = document.createElement('td');
                 if (col === 'key') {
-                  td.innerHTML = \`<div class="font-mono text-sm">\${key}</div>\`;
+                  td.innerHTML = \`<div class="font-mono text-sm key-cell">\${key}</div>\`;
+                  td.className = 'key-cell';
                   td.oncontextmenu = (e) => showContextMenu(e, key);
-                  td.onclick = (e) => {
-                    if (e.ctrlKey || e.metaKey) {
-                      toggleKeySelection(key);
-                    }
+                  td.ondblclick = (e) => {
+                    e.preventDefault();
+                    copyKey(key, e.shiftKey);
                   };
                 } else {
                   const value = allData[col] && allData[col][key] ? allData[col][key] : '';
@@ -897,7 +1026,6 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           document.querySelector('button[onclick="prevPage()"]').disabled = currentPage === 0;
           document.querySelector('button[onclick="nextPage()"]').disabled = end >= filteredKeys.length;
           
-          updateSelectedCount();
           updateProgress();
         }
 
@@ -954,14 +1082,14 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
           contextMenu = document.createElement('div');
           contextMenu.className = 'context-menu';
           contextMenu.innerHTML = \`
+            <div class="context-menu-item" onclick="copyKey('\${key}', false)">
+              📋 Copy Plain Key
+            </div>
+            <div class="context-menu-item" onclick="copyKey('\${key}', true)">
+              📋 Copy with Template
+            </div>
             <div class="context-menu-item" onclick="duplicateKey('\${key}')">
               📋 Duplicate Key
-            </div>
-            <div class="context-menu-item" onclick="exportKey('\${key}')">
-              📤 Export Key
-            </div>
-            <div class="context-menu-item" onclick="toggleKeySelection('\${key}')">
-              \${selectedKeys.has(key) ? '❌ Deselect' : '☑️ Select'}
             </div>
             <div class="context-menu-item danger" onclick="deleteKey('\${key}')">
               🗑️ Delete Key
@@ -999,69 +1127,6 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
             vscode.postMessage({ command: 'duplicateKey', originalKey: key, newKey: newKey });
           }
           closeContextMenu();
-        }
-
-        function exportKey(key) {
-          vscode.postMessage({ command: 'exportKey', key: key });
-          closeContextMenu();
-        }
-
-        // Selection Functions
-        function toggleKeySelection(key) {
-          if (selectedKeys.has(key)) {
-            selectedKeys.delete(key);
-          } else {
-            selectedKeys.add(key);
-          }
-          renderTable();
-          closeContextMenu();
-        }
-
-        function selectAllVisible() {
-          const filteredKeys = filterKeys();
-          const start = currentPage * pageSize;
-          const end = start + pageSize;
-          const pageKeys = filteredKeys.slice(start, end);
-          
-          pageKeys.forEach(key => selectedKeys.add(key));
-          renderTable();
-        }
-
-        function clearSelection() {
-          selectedKeys.clear();
-          renderTable();
-        }
-
-        function updateSelectedCount() {
-          const count = selectedKeys.size;
-          document.getElementById('selectedCount').textContent = 
-            count > 0 ? \`\${count} key(s) selected\` : '';
-        }
-
-        function fillEmptyValues() {
-          if (confirm('Fill all empty values with placeholder text?')) {
-            vscode.postMessage({ command: 'fillEmptyValues' });
-          }
-        }
-
-        function exportSelected() {
-          if (selectedKeys.size === 0) {
-            alert('No keys selected');
-            return;
-          }
-          
-          const exportData = {};
-          selectedKeys.forEach(key => {
-            exportData[key] = {};
-            languages.forEach(lang => {
-              exportData[key][lang] = allData[lang] && allData[lang][key] ? allData[lang][key] : '';
-            });
-          });
-          
-          const jsonString = JSON.stringify(exportData, null, 2);
-          navigator.clipboard.writeText(jsonString).then(() => {
-            alert(\`\${selectedKeys.size} keys exported to clipboard!\`);
-          });
         }
 
         // Drag and Drop Functions
@@ -1156,17 +1221,10 @@ function getWebviewContent(languages: string[], keys: string[], data: Record<str
                 e.preventDefault();
                 addLanguage();
                 break;
-              case 'a':
-                if (e.target.closest('table')) {
-                  e.preventDefault();
-                  selectAllVisible();
-                }
-                break;
             }
           }
           
           if (e.key === 'Escape') {
-            clearSelection();
             closeContextMenu();
           }
         });

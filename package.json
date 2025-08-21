@@ -1,41 +1,85 @@
 {
   "name": "i18n-table-editor",
   "displayName": "i18n Table Editor",
-  "description": "Display and edit i18n JSON files in a table",
-  "version": "0.0.1",
+  "description": "A powerful table editor for managing i18n translation files",
+  "version": "1.0.0",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.74.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
-    "onCommand:i18nTableEditor.openTable",
-    "onView:i18nTableEditor.sidebar"
+    "onCommand:i18nTableEditor.openTable"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "i18nTableEditor.openTable",
-        "title": "Open i18n Table Editor"
+        "title": "Open i18n Table Editor",
+        "icon": "$(globe)"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
+    "views": {
+      "explorer": [
         {
-          "id": "i18nTableEditor",
-          "title": "i18n Editor",
-          "icon": "resources/icon.svg"
+          "id": "i18nTableEditor.sidebar",
+          "name": "i18n Table Editor",
+          "when": "true"
         }
       ]
     },
-    "views": {
-      "i18nTableEditor": [
-        {
-          "id": "i18nTableEditor.sidebar",
-          "name": "i18n Table",
-          "type": "tree"
+    "configuration": {
+      "title": "i18n Table Editor",
+      "properties": {
+        "i18nTableEditor.copyTemplate": {
+          "type": "string",
+          "default": "t('{key}')",
+          "description": "Template for copying keys. Use {key} as placeholder.",
+          "examples": [
+            "t('{key}')",
+            "$t('{key}')",
+            "{{ '{key}' | translate }}",
+            "<Trans i18nKey=\"{key}\" />",
+            "AppLocalizations.of(context)!.{key}"
+          ]
+        },
+        "i18nTableEditor.defaultCopyMode": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "template"
+          ],
+          "default": "plain",
+          "description": "Default copy mode when double-clicking keys",
+          "enumDescriptions": [
+            "Copy plain key only",
+            "Copy with template applied"
+          ]
+        },
+        "i18nTableEditor.templates": {
+          "type": "object",
+          "default": {
+            "react-i18next": "t('{key}')",
+            "react-i18next-trans": "<Trans i18nKey=\"{key}\" />",
+            "vue-i18n": "$t('{key}')",
+            "angular-i18n": "{{ '{key}' | translate }}",
+            "flutter-intl": "AppLocalizations.of(context)!.{key}",
+            "custom": "t('{key}')"
+          },
+          "description": "Predefined templates for different frameworks",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "patternProperties": {
+            ".*": {
+              "type": "string",
+              "description": "Template string with {key} placeholder"
+            }
+          }
         }
-      ]
+      }
     }
   },
   "scripts": {
@@ -44,8 +88,8 @@
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/vscode": "^1.80.0",
+    "@types/vscode": "^1.74.0",
     "@types/node": "16.x",
-    "typescript": "^4.7.4"
+    "typescript": "^4.9.4"
   }
 }
