@@ -1,3 +1,5 @@
+//webview.ts
+
 import { ExtensionConfig } from './types';
 
 export function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, config: ExtensionConfig) {

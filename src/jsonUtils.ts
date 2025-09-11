@@ -1,3 +1,5 @@
+//jsonUtils.ts
+
 export function flattenJson(obj: any, prefix = ''): Record<string, string> {
   let result: Record<string, string> = {};
   for (const key in obj) {

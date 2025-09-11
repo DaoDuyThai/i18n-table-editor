@@ -1,3 +1,5 @@
+//config.ts
+
 import * as vscode from 'vscode';
 import { ExtensionConfig } from './types';
 

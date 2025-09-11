@@ -1,3 +1,5 @@
+//sidebar.ts
+
 import * as vscode from 'vscode';
 
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
