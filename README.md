@@ -1,4 +1,4 @@
-# i18n-table-editor README
+# Locale Language Json Table Editor README
 
 VS Code extension giúp edit file JSON đa ngôn ngữ theo dạng bảng trực quan.
 Code bởi Thái Đẹp Trai
@@ -15,11 +15,11 @@ If you have any requirements or dependencies, add a section describing those and
 
 ## Extension Settings
 
-1. Mở folder chứa file JSON i18n.
-2. Dùng command palette: `I18n Table Editor: Open`.
+1. Mở folder chứa file JSON.
+2. Dùng command palette: `Locale Language Json Table Editor: Open`.
 3. Sửa dữ liệu & save.
 
 
 ### 1.0.0
 
-Initial release of i18n-table-editor
+Initial release of Locale Language Json Table Editor
