@@ -39,14 +39,17 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         const { languages, keys, data } = collectData(currentFolderPath);
         const config = getConfig();
-        panel.webview.html = getWebviewContent(languages, keys, data, config);
+        panel.webview.postMessage({ command: 'updateData', languages, keys, data, config });
       } catch (e) {
         const error = e as Error;
         vscode.window.showErrorMessage(`Error updating Webview: ${error.message}`);
       }
     };
 
-    updateWebview();
+    // Set initial empty HTML to initialize Webview
+    const config = getConfig();
+    panel.webview.html = getWebviewContent([], [], {}, config);
+    updateWebview(); // Send real data via postMessage
 
     // File watcher
     if (currentFolderPath) {
@@ -56,14 +59,6 @@ export function activate(context: vscode.ExtensionContext) {
       watcher.onDidDelete(() => updateWebview());
       context.subscriptions.push(watcher);
     }
-
-    // Configuration change watcher
-    const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('localeLanguagesJsonTableEditor')) {
-        updateWebview();
-      }
-    });
-    context.subscriptions.push(configWatcher);
 
     // Handle messages from Webview
     panel.webview.onDidReceiveMessage(async message => {

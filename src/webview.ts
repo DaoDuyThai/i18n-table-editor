@@ -1,8 +1,8 @@
 import { ExtensionConfig } from './types';
 
 export function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, config: ExtensionConfig) {
-    return `
-    <!DOCTYPE html>
+  return `
+  <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -94,20 +94,24 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
     }
     
     td.missing {
-      background: linear-gradient(135deg, var(--vscode-editorError-background) 0%, var(--vscode-editor-background) 100%);
-      position: relative;
-    }
-    
-    td.missing::before {
-      content: "Missing";
-      position: absolute;
-      top: 2px;
-      right: 4px;
-      font-size: 10px;
-      color: #ef4444;
-      opacity: 0.7;
-      font-weight: 500;
-    }
+  background: rgba(239, 68, 68, 0.12); /* đỏ nhạt, đỡ gắt hơn */
+  position: relative;
+  text-align: center; /* căn giữa ngang */
+  vertical-align: middle; /* căn giữa dọc */
+}
+
+td.missing::before {
+  content: "Missing";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%); /* căn giữa tuyệt đối */
+  font-size: 12px;
+  color: #ef4444; /* đỏ chuẩn Tailwind (red-500) */
+  opacity: 0.8;
+  font-weight: 600;
+  pointer-events: none; /* không che mất nội dung nếu sau này có text */
+}
     
     td[contenteditable]:focus {
       outline: none;
@@ -364,8 +368,8 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
           <label class="block text-sm font-medium mb-2">Quick Templates:</label>
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
             ${Object.entries(config.templates).map(([name, template]) => {
-        const isSelected = template === config.copyTemplate;
-        return `<div class="template-grid-item cursor-pointer transition-colors ${isSelected ? 'template-selected' : 'hover:bg-gray-600'}" 
+    const isSelected = template === config.copyTemplate;
+    return `<div class="template-grid-item cursor-pointer transition-colors ${isSelected ? 'template-selected' : 'hover:bg-gray-600'}" 
                   data-template="${template.replace(/"/g, '&quot;').replace(/'/g, '&#39;')}" 
                   data-template-name="${name}"
                   onclick="setTemplateFromData(this)">
@@ -373,7 +377,7 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
                 <code class="text-xs ${isSelected ? 'text-green-200' : 'text-green-400'} break-all">${template.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
                 ${isSelected ? '<div class="text-xs text-blue-200 mt-1 font-medium">✓ Currently Selected</div>' : ''}
               </div>`;
-    }).join('')}
+  }).join('')}
           </div>
         </div>
       </div>
@@ -470,6 +474,7 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       <div>Ctrl+S: Refresh</div>
       <div>Double-click key cell: Copy</div>
       <div>Shift+Double-click: Copy with template</div>
+      <div>Enter in cell: Save</div>
     </div>
   </div>
 
@@ -483,12 +488,29 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
     let visibleColumns = new Set(languages);
     let currentPage = 0;
     let pageSize = 50;
-    let sortColumn = 'key';
-    let sortDirection = 'asc';
+    let sortColumn = null;
+    let sortDirection = null;
     let filterText = '';
     let filterType = 'all';
     let filterLanguage = '';
     let contextMenu = null;
+
+    // Handle data updates from extension
+    window.addEventListener('message', event => {
+      const message = event.data;
+      if (message.command === 'updateData') {
+        allKeys = message.keys;
+        allData = message.data;
+        languages = message.languages;
+        config = message.config;
+        columnOrder = ['key', ...languages];
+        visibleColumns = new Set(languages);
+        populateLanguageFilter();
+        renderColumns();
+        updateSettingsUI();
+        renderTable();
+      }
+    });
 
     function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
     function addKey() { vscode.postMessage({ command: 'addKey' }); }
@@ -503,60 +525,65 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
     function updateCopyMode(newMode) {
       config.defaultCopyMode = newMode;
       vscode.postMessage({ command: 'updateConfig', key: 'defaultCopyMode', value: newMode });
-      
-      // Show/hide template sections based on mode
-      const templateInputSection = document.getElementById('templateInputSection');
-      const quickTemplatesSection = document.getElementById('quickTemplatesSection');
-      
-      if (newMode === 'plain') {
-        templateInputSection.classList.add('hidden');
-        quickTemplatesSection.classList.add('hidden');
-      } else {
-        templateInputSection.classList.remove('hidden');
-        quickTemplatesSection.classList.remove('hidden');
-      }
-    }
-
-    function setTemplate(template) {
-      updateTemplate(template);
+      const isTemplate = newMode === 'template';
+      document.getElementById('templateInputSection').classList.toggle('hidden', !isTemplate);
+      document.getElementById('quickTemplatesSection').classList.toggle('hidden', !isTemplate);
+      updateSettingsUI();
     }
 
     function setTemplateFromData(element) {
       const template = element.getAttribute('data-template');
-      
-      // Remove previous selection styling
       document.querySelectorAll('.template-grid-item').forEach(item => {
         item.classList.remove('template-selected');
         item.classList.add('hover:bg-gray-600');
-        
-        // Reset colors
         const title = item.querySelector('.font-semibold');
         const code = item.querySelector('code');
-        const selectedIndicator = item.querySelector('.text-blue-200.mt-1');
-        
+        const selectedIndicator = item.querySelector('.text-xs.text-blue-200.mt-1');
         if (title) title.className = 'font-semibold text-blue-400';
         if (code) code.className = 'text-xs text-green-400 break-all';
         if (selectedIndicator) selectedIndicator.remove();
       });
-      
-      // Add selection to current item
       element.classList.remove('hover:bg-gray-600');
       element.classList.add('template-selected');
-      
-      // Update colors for selected item
       const title = element.querySelector('.font-semibold');
       const code = element.querySelector('code');
-      
       if (title) title.className = 'font-semibold text-blue-200';
       if (code) code.className = 'text-xs text-green-200 break-all';
-      
-      // Add selected indicator
       const selectedIndicator = document.createElement('div');
       selectedIndicator.className = 'text-xs text-blue-200 mt-1 font-medium';
       selectedIndicator.textContent = '✓ Currently Selected';
       element.appendChild(selectedIndicator);
-      
-      setTemplate(template);
+      updateTemplate(template);
+    }
+
+    function updateSettingsUI() {
+      document.getElementById('copyModeSelect').value = config.defaultCopyMode;
+      const isTemplate = config.defaultCopyMode === 'template';
+      document.getElementById('templateInputSection').classList.toggle('hidden', !isTemplate);
+      document.getElementById('quickTemplatesSection').classList.toggle('hidden', !isTemplate);
+      document.querySelectorAll('.template-grid-item').forEach(item => {
+        const template = item.getAttribute('data-template');
+        const isSelected = template === config.copyTemplate;
+        item.classList.toggle('template-selected', isSelected);
+        item.classList.toggle('hover:bg-gray-600', !isSelected);
+        const title = item.querySelector('.font-semibold');
+        const code = item.querySelector('code');
+        let selectedIndicator = item.querySelector('.text-xs.text-blue-200.mt-1');
+        if (isSelected) {
+          if (title) title.className = 'font-semibold text-blue-200';
+          if (code) code.className = 'text-xs text-green-200 break-all';
+          if (!selectedIndicator) {
+            selectedIndicator = document.createElement('div');
+            selectedIndicator.className = 'text-xs text-blue-200 mt-1 font-medium';
+            selectedIndicator.textContent = '✓ Currently Selected';
+            item.appendChild(selectedIndicator);
+          }
+        } else {
+          if (title) title.className = 'font-semibold text-blue-400';
+          if (code) code.className = 'text-xs text-green-400 break-all';
+          if (selectedIndicator) selectedIndicator.remove();
+        }
+      });
     }
 
     function copyKey(key, useTemplate = false) {
@@ -600,7 +627,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
     function renderColumns() {
       const checkboxesDiv = document.getElementById('columnCheckboxes');
       checkboxesDiv.innerHTML = '';
-      
       languages.forEach(lang => {
         const label = document.createElement('label');
         label.className = 'checkbox-label inline-flex items-center';
@@ -609,7 +635,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
         label.ondragover = dragOver;
         label.ondrop = drop;
         label.dataset.lang = lang;
-        
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = visibleColumns.has(lang);
@@ -619,7 +644,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
           else visibleColumns.delete(lang);
           renderTable();
         };
-        
         label.appendChild(cb);
         label.appendChild(document.createTextNode(lang));
         checkboxesDiv.appendChild(label);
@@ -628,16 +652,12 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
 
     function filterKeys() {
       return allKeys.filter(key => {
-        // Text search
         const keyMatch = key.toLowerCase().includes(filterText.toLowerCase());
         const valueMatch = languages.some(lang => {
           const value = allData[lang] && allData[lang][key] ? allData[lang][key] : '';
           return value.toLowerCase().includes(filterText.toLowerCase());
         });
-        
         if (!keyMatch && !valueMatch) return false;
-        
-        // Filter type
         switch(filterType) {
           case 'missing':
             return languages.some(lang => !allData[lang] || !allData[lang][key] || !allData[lang][key].trim());
@@ -658,7 +678,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       tableHead.innerHTML = '';
       tableBody.innerHTML = '';
 
-      // Header row
       const headerRow = document.createElement('tr');
       columnOrder.forEach(col => {
         if (col === 'key' || visibleColumns.has(col)) {
@@ -684,28 +703,25 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       });
       tableHead.appendChild(headerRow);
 
-      // Filter and sort keys
       let filteredKeys = filterKeys();
+      if (sortColumn) {
+        filteredKeys.sort((a, b) => {
+          if (sortColumn === 'key') {
+            return sortDirection === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+          } else {
+            const valA = allData[sortColumn] && allData[sortColumn][a] ? allData[sortColumn][a] : '';
+            const valB = allData[sortColumn] && allData[sortColumn][b] ? allData[sortColumn][b] : '';
+            return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+          }
+        });
+      }
 
-      // Sort
-      filteredKeys.sort((a, b) => {
-        if (sortColumn === 'key') {
-          return sortDirection === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
-        } else {
-          const valA = allData[sortColumn] && allData[sortColumn][a] ? allData[sortColumn][a] : '';
-          const valB = allData[sortColumn] && allData[sortColumn][b] ? allData[sortColumn][b] : '';
-          return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(a);
-        }
-      });
-
-      // Paging
       const start = currentPage * pageSize;
       const end = start + pageSize;
       const pageKeys = filteredKeys.slice(start, end);
 
       pageKeys.forEach((key, index) => {
         const tr = document.createElement('tr');
-        
         columnOrder.forEach(col => {
           if (col === 'key' || visibleColumns.has(col)) {
             const td = document.createElement('td');
@@ -725,6 +741,7 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
               td.dataset.lang = col;
               td.onblur = handleCellBlur;
               td.oninput = handleCellInput;
+              td.onkeydown = handleCellKeydown; // New handler for Enter key
               if (!value) td.classList.add('missing');
             }
             tr.appendChild(td);
@@ -733,18 +750,23 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
         tableBody.appendChild(tr);
       });
 
-      // Page info
       const totalPages = Math.ceil(filteredKeys.length / pageSize);
       document.getElementById('pageInfo').textContent = \`Page \${currentPage + 1} of \${totalPages} (\${filteredKeys.length} items)\`;
       document.querySelector('button[onclick="prevPage()"]').disabled = currentPage === 0;
       document.querySelector('button[onclick="nextPage()"]').disabled = end >= filteredKeys.length;
-      
       updateProgress();
     }
 
     function sortByColumn(col) {
       if (sortColumn === col) {
-        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+        if (sortDirection === 'asc') {
+          sortDirection = 'desc';
+        } else if (sortDirection === 'desc') {
+          sortColumn = null;
+          sortDirection = null;
+        } else {
+          sortDirection = 'asc';
+        }
       } else {
         sortColumn = col;
         sortDirection = 'asc';
@@ -767,6 +789,14 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       td.classList.toggle('missing', !newValue);
     }
 
+    function handleCellKeydown(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault(); // Prevent line break
+        handleCellBlur(e); // Save the cell
+        e.target.blur(); // Remove focus from the cell
+      }
+    }
+
     function renameLanguage(lang) {
       vscode.postMessage({ command: 'renameLanguage', lang: lang });
     }
@@ -786,12 +816,9 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       }
     }
 
-    // Context Menu Functions
     function showContextMenu(e, key) {
       e.preventDefault();
-      
       if (contextMenu) contextMenu.remove();
-      
       contextMenu = document.createElement('div');
       contextMenu.className = 'context-menu';
       contextMenu.innerHTML = \`
@@ -805,12 +832,9 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
           🗑️ Delete Key
         </div>
       \`;
-      
       contextMenu.style.left = (e.clientX + 5) + 'px';
-    contextMenu.style.top = (e.clientY + 5) + 'px';
-      
+      contextMenu.style.top = (e.clientY + 5) + 'px';
       document.body.appendChild(contextMenu);
-      
       setTimeout(() => {
         document.addEventListener('click', closeContextMenu);
       }, 100);
@@ -839,7 +863,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       closeContextMenu();
     }
 
-    // Drag and Drop Functions
     function dragStart(e) {
       e.dataTransfer.setData('text/plain', e.target.dataset.lang);
     }
@@ -886,7 +909,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       }
     }
 
-    // Event Listeners
     document.getElementById('search').addEventListener('input', (e) => {
       filterText = e.target.value;
       currentPage = 0;
@@ -911,7 +933,6 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
       renderTable();
     });
 
-    // Keyboard Shortcuts
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey || e.metaKey) {
         switch(e.key) {
@@ -933,15 +954,14 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
             break;
         }
       }
-      
       if (e.key === 'Escape') {
         closeContextMenu();
       }
     });
 
-    // Initialize
     populateLanguageFilter();
     renderColumns();
+    updateSettingsUI();
     renderTable();
   </script>
 </body>
