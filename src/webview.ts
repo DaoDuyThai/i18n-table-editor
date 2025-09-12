@@ -1,8 +1,14 @@
-//webview.ts
-
+// webview.ts
 import { ExtensionConfig } from './types';
 
-export function getWebviewContent(languages: string[], keys: string[], data: Record<string, Record<string, string>>, config: ExtensionConfig) {
+export function getWebviewContent(
+  languages: string[], 
+  keys: string[], 
+  data: Record<string, Record<string, string>>, 
+  config: ExtensionConfig,
+  structureType?: 'flat' | 'nested',
+  selectedFile?: string
+) {
   return `
   <!DOCTYPE html>
 <html lang="en">
@@ -96,24 +102,24 @@ export function getWebviewContent(languages: string[], keys: string[], data: Rec
     }
     
     td.missing {
-  background: rgba(239, 68, 68, 0.12); /* đỏ nhạt, đỡ gắt hơn */
-  position: relative;
-  text-align: center; /* căn giữa ngang */
-  vertical-align: middle; /* căn giữa dọc */
-}
+      background: rgba(239, 68, 68, 0.12);
+      position: relative;
+      text-align: center;
+      vertical-align: middle;
+    }
 
-td.missing::before {
-  content: "Missing";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%); /* căn giữa tuyệt đối */
-  font-size: 12px;
-  color: #ef4444; /* đỏ chuẩn Tailwind (red-500) */
-  opacity: 0.8;
-  font-weight: 600;
-  pointer-events: none; /* không che mất nội dung nếu sau này có text */
-}
+    td.missing::before {
+      content: "Missing";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 12px;
+      color: #ef4444;
+      opacity: 0.8;
+      font-weight: 600;
+      pointer-events: none;
+    }
     
     td[contenteditable]:focus {
       outline: none;
@@ -329,6 +335,25 @@ td.missing::before {
     details summary:hover {
       color: var(--vscode-list-hoverForeground);
     }
+
+    .workspace-info {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      border-left: 4px solid #0e639c;
+    }
+
+    .info-badge {
+      display: inline-block;
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, white);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body class="p-6">
@@ -336,6 +361,39 @@ td.missing::before {
     <h1 class="text-3xl font-bold mb-6 text-center bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
       🌐 Locale Language Json Table Editor
     </h1>
+    
+    <!-- Workspace Info Panel -->
+    <div id="workspaceInfo" class="workspace-info">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">📁 Current Workspace</h2>
+        <div class="flex gap-2">
+          <button onclick="changeFolder()" class="btn bg-blue-500 hover:bg-blue-600 text-white btn-sm">
+            📁 Change Folder
+          </button>
+          <button id="changeFileBtn" onclick="changeFile()" class="btn bg-purple-500 hover:bg-purple-600 text-white btn-sm hidden">
+            📄 Change File
+          </button>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-3 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Structure:</span>
+          <span id="structureType" class="info-badge">Not Set</span>
+        </div>
+        <div id="selectedFileInfo" class="flex items-center gap-2 hidden">
+          <span class="font-medium">Editing File:</span>
+          <span id="selectedFile" class="info-badge">Not Set</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Languages:</span>
+          <span id="languageCount" class="info-badge">0</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Keys:</span>
+          <span id="keyCount" class="info-badge">0</span>
+        </div>
+      </div>
+    </div>
     
     <!-- Settings Panel -->
     <details class="settings-panel">
@@ -486,6 +544,8 @@ td.missing::before {
     let allData = ${JSON.stringify(data)};
     let languages = ${JSON.stringify(languages)};
     let config = ${JSON.stringify(config)};
+    let structureType = '${structureType || 'flat'}';
+    let selectedFile = '${selectedFile || ''}';
     let columnOrder = ['key', ...languages];
     let visibleColumns = new Set(languages);
     let currentPage = 0;
@@ -505,19 +565,39 @@ td.missing::before {
         allData = message.data;
         languages = message.languages;
         config = message.config;
+        structureType = message.structureType;
+        selectedFile = message.selectedFile;
         columnOrder = ['key', ...languages];
         visibleColumns = new Set(languages);
         populateLanguageFilter();
         renderColumns();
         updateSettingsUI();
+        updateWorkspaceInfo();
         renderTable();
       }
     });
 
+    function changeFolder() { vscode.postMessage({ command: 'changeFolder' }); }
+    function changeFile() { vscode.postMessage({ command: 'changeFile' }); }
     function addLanguage() { vscode.postMessage({ command: 'addLanguage' }); }
     function addKey() { vscode.postMessage({ command: 'addKey' }); }
     function refreshData() { vscode.postMessage({ command: 'refresh' }); }
     function openSettings() { vscode.postMessage({ command: 'openSettings' }); }
+
+    function updateWorkspaceInfo() {
+      document.getElementById('structureType').textContent = structureType === 'flat' ? 'Flat Structure' : 'Nested Structure';
+      document.getElementById('languageCount').textContent = languages.length;
+      document.getElementById('keyCount').textContent = allKeys.length;
+      
+      if (structureType === 'nested') {
+        document.getElementById('selectedFileInfo').classList.remove('hidden');
+        document.getElementById('changeFileBtn').classList.remove('hidden');
+        document.getElementById('selectedFile').textContent = selectedFile || 'Not Set';
+      } else {
+        document.getElementById('selectedFileInfo').classList.add('hidden');
+        document.getElementById('changeFileBtn').classList.add('hidden');
+      }
+    }
 
     function updateTemplate(newTemplate) {
       config.copyTemplate = newTemplate;
@@ -743,7 +823,7 @@ td.missing::before {
               td.dataset.lang = col;
               td.onblur = handleCellBlur;
               td.oninput = handleCellInput;
-              td.onkeydown = handleCellKeydown; // New handler for Enter key
+              td.onkeydown = handleCellKeydown;
               if (!value) td.classList.add('missing');
             }
             tr.appendChild(td);
@@ -793,9 +873,9 @@ td.missing::before {
 
     function handleCellKeydown(e) {
       if (e.key === 'Enter') {
-        e.preventDefault(); // Prevent line break
-        handleCellBlur(e); // Save the cell
-        e.target.blur(); // Remove focus from the cell
+        e.preventDefault();
+        handleCellBlur(e);
+        e.target.blur();
       }
     }
 
@@ -964,6 +1044,7 @@ td.missing::before {
     populateLanguageFilter();
     renderColumns();
     updateSettingsUI();
+    updateWorkspaceInfo();
     renderTable();
   </script>
 </body>
