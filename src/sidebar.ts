@@ -1,5 +1,3 @@
-//sidebar.ts
-
 import * as vscode from 'vscode';
 
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -11,12 +9,22 @@ export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   }
 
   getChildren(): vscode.TreeItem[] {
-    const item = new vscode.TreeItem('Open locale table editor', vscode.TreeItemCollapsibleState.None);
-    item.command = {
-      command: 'localeLanguagesJsonTableEditor.openTable',
-      title: 'Open Locale Table Editor',
-      tooltip: 'Open the Locale Table Editor'
+    const flatStructureItem = new vscode.TreeItem('Open with Flat Structure', vscode.TreeItemCollapsibleState.None);
+    flatStructureItem.command = {
+      command: 'localeLanguagesJsonTableEditor.openTableFlat',
+      title: 'Open Locale Table Editor - Flat Structure',
+      tooltip: 'Open the Locale Table Editor with Flat Structure (files like en.json, vi.json in root folder)'
     };
-    return [item];
+    flatStructureItem.iconPath = new vscode.ThemeIcon('file-text');
+
+    const nestedStructureItem = new vscode.TreeItem('Open with Nested Structure', vscode.TreeItemCollapsibleState.None);
+    nestedStructureItem.command = {
+      command: 'localeLanguagesJsonTableEditor.openTableNested',
+      title: 'Open Locale Table Editor - Nested Structure',
+      tooltip: 'Open the Locale Table Editor with Nested Structure (folders like en/, vi/ with files inside each)'
+    };
+    nestedStructureItem.iconPath = new vscode.ThemeIcon('folder-opened');
+
+    return [flatStructureItem, nestedStructureItem];
   }
 }

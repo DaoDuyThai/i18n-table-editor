@@ -16,17 +16,27 @@
   "contributes": {
     "commands": [
       {
+        "command": "localeLanguagesJsonTableEditor.openTableFlat",
+        "title": "Open Locale Table Editor (Flat Structure)",
+        "category": "Locale Editor"
+      },
+      {
+        "command": "localeLanguagesJsonTableEditor.openTableNested",
+        "title": "Open Locale Table Editor (Nested Structure)", 
+        "category": "Locale Editor"
+      },
+      {
         "command": "localeLanguagesJsonTableEditor.openTable",
-        "title": "Open Locale Languages JSON Table Editor",
-        "icon": "$(globe)"
+        "title": "Open Locale Table Editor",
+        "category": "Locale Editor"
       }
     ],
     "views": {
       "explorer": [
         {
           "id": "localeLanguagesJsonTableEditor.sidebar",
-          "name": "Locale Languages JSON Table Editor",
-          "when": "true"
+          "name": "Locale Editor",
+          "when": "workspaceFolderCount > 0"
         }
       ]
     },

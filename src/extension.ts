@@ -1,4 +1,3 @@
-// extension.ts
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,26 +24,6 @@ export function activate(context: vscode.ExtensionContext) {
       return undefined;
     }
     return folderUri[0].fsPath;
-  };
-
-  const selectStructureType = async (): Promise<'flat' | 'nested' | undefined> => {
-    const choice = await vscode.window.showQuickPick([
-      {
-        label: 'Flat Structure',
-        description: 'Files like en.json, vi.json, ko.json in root folder',
-        detail: 'Traditional structure with language files directly in the folder'
-      },
-      {
-        label: 'Nested Structure', 
-        description: 'Folders like en/, vi/, ko/ with files inside each',
-        detail: 'Organized structure with language folders containing multiple JSON files'
-      }
-    ], {
-      placeHolder: 'Select your locale folder structure type'
-    });
-
-    if (!choice) return undefined;
-    return choice.label === 'Flat Structure' ? 'flat' : 'nested';
   };
 
   const selectFileForNested = async (folderPath: string): Promise<string | undefined> => {
@@ -79,12 +58,11 @@ export function activate(context: vscode.ExtensionContext) {
     return selectedFile?.label;
   };
 
-  const initializeWorkspace = async () => {
+  const initializeWorkspace = async (structureType: 'flat' | 'nested'): Promise<boolean> => {
     currentFolderPath = await selectFolder();
     if (!currentFolderPath) return false;
 
-    currentStructureType = await selectStructureType();
-    if (!currentStructureType) return false;
+    currentStructureType = structureType;
 
     if (currentStructureType === 'nested') {
       currentSelectedFile = await selectFileForNested(currentFolderPath);
@@ -94,17 +72,15 @@ export function activate(context: vscode.ExtensionContext) {
     return true;
   };
 
-  const createWebview = async () => {
-    // If no workspace is initialized, initialize it
-    if (!currentFolderPath || !currentStructureType) {
-      const initialized = await initializeWorkspace();
-      if (!initialized) return;
-    }
+  const createWebview = async (structureType: 'flat' | 'nested') => {
+    // Initialize workspace with the specified structure type
+    const initialized = await initializeWorkspace(structureType);
+    if (!initialized) return;
 
     if (panel) panel.dispose();
     panel = vscode.window.createWebviewPanel(
       'localeTable',
-      'Locale Table Editor',
+      `Locale Table Editor (${structureType === 'flat' ? 'Flat' : 'Nested'})`,
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true }
     );
@@ -137,9 +113,12 @@ export function activate(context: vscode.ExtensionContext) {
       }
     };
 
-    // Set initial empty HTML to initialize Webview
+    // Set initial HTML content
     const config = getConfig();
-    panel.webview.html = getWebviewContent([], [], {}, config, currentStructureType, currentSelectedFile);
+    panel.webview.html = getWebviewContent(
+      [], [], {}, config, currentStructureType, currentSelectedFile, 
+      panel.webview, context.extensionUri
+    );
     updateWebview(); // Send real data via postMessage
 
     // File watcher
@@ -163,16 +142,19 @@ export function activate(context: vscode.ExtensionContext) {
     // Handle messages from Webview
     panel.webview.onDidReceiveMessage(async message => {
       if (!currentFolderPath || !currentStructureType) {
-        const initialized = await initializeWorkspace();
-        if (!initialized) return;
-        updateWebview();
+        vscode.window.showErrorMessage('Workspace not properly initialized');
         return;
       }
 
       switch (message.command) {
         case 'changeFolder':
-          const initialized = await initializeWorkspace();
-          if (initialized) {
+          const newFolderPath = await selectFolder();
+          if (newFolderPath) {
+            currentFolderPath = newFolderPath;
+            if (currentStructureType === 'nested') {
+              currentSelectedFile = await selectFileForNested(currentFolderPath);
+              if (!currentSelectedFile) return;
+            }
             updateWebview();
           }
           break;
@@ -386,12 +368,31 @@ export function activate(context: vscode.ExtensionContext) {
 
     panel.onDidDispose(() => {
       panel = undefined;
+      currentFolderPath = undefined;
+      currentStructureType = undefined;
+      currentSelectedFile = undefined;
     });
   };
 
-  // Command
+  // Register commands for both structure types
   context.subscriptions.push(
-    vscode.commands.registerCommand('localeLanguagesJsonTableEditor.openTable', createWebview)
+    vscode.commands.registerCommand('localeLanguagesJsonTableEditor.openTableFlat', () => {
+      createWebview('flat');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('localeLanguagesJsonTableEditor.openTableNested', () => {
+      createWebview('nested');
+    })
+  );
+
+  // Keep the original command for backward compatibility
+  context.subscriptions.push(
+    vscode.commands.registerCommand('localeLanguagesJsonTableEditor.openTable', () => {
+      // Default to flat structure for backward compatibility
+      createWebview('flat');
+    })
   );
 
   // Sidebar View
